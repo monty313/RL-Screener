@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "RL-Screener"
 #property link      "https://github.com/monty313/RL-Screener"
-#property version   "1.20"
+#property version   "1.30"
 #property description "Scans Market Watch. Three-clock grade: L / near / far."
 #property description "S1 1m-15m-30m | S2 5m-30m-1h | S3 15m-1h-4h | S4 30m-4h-1d"
 #property strict
@@ -36,7 +36,7 @@ enum ENUM_DIR_FILTER
 
 input group "Screener"
 input ENUM_GRADE_SET   InpSet            = SET_S3;
-input ENUM_ROW_FILTER  InpFilter         = FILTER_Q4;
+input ENUM_ROW_FILTER  InpFilter         = FILTER_ALL;
 input ENUM_DIR_FILTER  InpDirection      = DIR_BOTH;
 input bool             InpClosedBar      = true;
 input int              InpMinGradeQ4     = 15;
@@ -52,7 +52,7 @@ input group "Watch hygiene"
 input bool             InpSkipNoTrade    = true;
 input bool             InpSkipNoQuote    = true;
 input bool             InpHideUnready    = true;
-input double           InpMaxSpreadPips  = 3.0;    // 0 = off
+input double           InpMaxSpreadPips  = 0;      // 0 = off
 input bool             InpRememberLayout = true;
 
 input group "Alerts"
@@ -76,7 +76,7 @@ input int              InpVisibleRows    = 16;
 #define CHIP2_Y     106
 #define FOOT_H      78
 #define TABLE_TOP   158
-#define GV_PREFIX   "GradeScr_"
+#define GV_PREFIX   "GradeScr21_"
 
 struct SRow
   {
@@ -149,23 +149,23 @@ uint ARGBC(const uchar a,const color clr)
 //+------------------------------------------------------------------+
 void Palette(void)
   {
-   C_BG        = ARGBC(255, C'18,12,8');
-   C_PANEL     = ARGBC(255, C'36,26,16');
-   C_WASH      = ARGBC(255, C'24,16,10');
-   C_LINE      = ARGBC(255, C'74,52,28');
-   C_BRASS     = ARGBC(255, C'212,168,74');
-   C_BRASS_DIM = ARGBC(255, C'122,86,36');
-   C_BRASS_HOT = ARGBC(255, C'236,204,118');
-   C_INK       = ARGBC(255, C'56,36,18');
-   C_CREAM     = ARGBC(255, C'244,230,196');
-   C_MUTED     = ARGBC(255, C'168,140,96');
-   C_LONG      = ARGBC(255, C'122,148,86');
-   C_SHORT     = ARGBC(255, C'168,78,64');
-   C_DEAD      = ARGBC(255, C'92,72,48');
-   C_CHIP      = ARGBC(255, C'48,34,20');
-   C_CHIP_ON   = ARGBC(255, C'86,58,24');
-   C_ROW       = ARGBC(255, C'44,32,20');
-   C_ROW2      = ARGBC(255, C'38,28,16');
+   C_BG        = ARGBC(255, C'8,10,14');
+   C_PANEL     = ARGBC(255, C'14,16,22');
+   C_WASH      = ARGBC(255, C'10,12,18');
+   C_LINE      = ARGBC(255, C'36,42,56');
+   C_BRASS     = ARGBC(255, C'56,210,230');
+   C_BRASS_DIM = ARGBC(255, C'28,90,110');
+   C_BRASS_HOT = ARGBC(255, C'120,240,255');
+   C_INK       = ARGBC(255, C'8,10,14');
+   C_CREAM     = ARGBC(255, C'226,232,242');
+   C_MUTED     = ARGBC(255, C'122,132,148');
+   C_LONG      = ARGBC(255, C'46,214,140');
+   C_SHORT     = ARGBC(255, C'255,82,110');
+   C_DEAD      = ARGBC(255, C'70,78,92');
+   C_CHIP      = ARGBC(255, C'22,26,36');
+   C_CHIP_ON   = ARGBC(255, C'18,48,58');
+   C_ROW       = ARGBC(255, C'18,20,28');
+   C_ROW2      = ARGBC(255, C'16,18,24');
   }
 
 //+------------------------------------------------------------------+
@@ -326,9 +326,9 @@ void FireAlert(const SRow &row,const int lvl)
   {
    if(!g_alerts_on || !InpAlerts)
       return;
-   const string way = (row.dir > 0 ? "LONG" : "SHORT");
-   const string msg = StringFormat("Grade %s %s  %.2f  %s  spr %.1f",
-                                   row.symbol, way, row.grade,
+   const string way = (row.dir > 0 ? "BUY" : "SELL");
+   const string msg = StringFormat("%s %s  grade %.2f  %s  spr %.1f",
+                                   way, row.symbol, row.grade,
                                    (lvl >= 5 ? "Q5" : "Q4"), row.spread_pips);
    if(InpAlertPopup)
       Alert(msg);
@@ -503,8 +503,10 @@ void SortRows(void)
         {
          const SRow a = g_rows[tmp[j]];
          const SRow b = g_rows[tmp[best]];
-         if(a.legal && !b.legal) { best = j; continue; }
-         if(a.legal == b.legal && a.grade > b.grade)
+         const int as = (SignalStrong(a) ? 2 : (SignalDir(a) != 0 ? 1 : 0));
+         const int bs = (SignalStrong(b) ? 2 : (SignalDir(b) != 0 ? 1 : 0));
+         if(as > bs) { best = j; continue; }
+         if(as == bs && a.grade > b.grade)
             best = j;
         }
       const int sw = tmp[i];
@@ -532,47 +534,22 @@ void FillRound(const int x1,const int y1,const int x2,const int y2,const int r,c
 //+------------------------------------------------------------------+
 void Wash(void)
   {
-   for(int y = 0; y < g_height; y += 3)
-     {
-      const double t = (double)y / MathMax(1, g_height - 1);
-      const uint c = MixU(C_PANEL, C_WASH, t * 0.85);
-      g_cv.FillRectangle(0, y, g_width - 1, y + 2, c);
-     }
-  }
-
-//+------------------------------------------------------------------+
-void CornerMark(const int x,const int y,const int dx,const int dy)
-  {
-   g_cv.LineAA(x, y, x + dx * 18, y, C_BRASS);
-   g_cv.LineAA(x, y, x, y + dy * 18, C_BRASS);
-   g_cv.FillCircle(x + dx * 4, y + dy * 4, 2, C_BRASS_HOT);
-   g_cv.FillCircle(x + dx * 10, y, 1, C_BRASS_DIM);
-   g_cv.FillCircle(x, y + dy * 10, 1, C_BRASS_DIM);
+   g_cv.FillRectangle(0, 0, g_width - 1, g_height - 1, C_PANEL);
+   g_cv.FillRectangle(0, 0, 3, g_height - 1, C_BRASS);
   }
 
 //+------------------------------------------------------------------+
 void Frame(void)
   {
-   g_cv.Rectangle(0, 0, g_width - 1, g_height - 1, C_BRASS_DIM);
-   g_cv.Rectangle(3, 3, g_width - 4, g_height - 4, C_LINE);
-   g_cv.Rectangle(6, 6, g_width - 7, g_height - 7, C_BRASS);
-   CornerMark(10, 10, 1, 1);
-   CornerMark(g_width - 11, 10, -1, 1);
-   CornerMark(10, g_height - 11, 1, -1);
-   CornerMark(g_width - 11, g_height - 11, -1, -1);
-   g_cv.FillCircle(g_width / 2, 6, 3, C_BRASS_HOT);
-   g_cv.FillCircle(g_width / 2, g_height - 7, 3, C_BRASS_HOT);
+   g_cv.Rectangle(0, 0, g_width - 1, g_height - 1, C_LINE);
   }
 
 //+------------------------------------------------------------------+
 void Crest(const int cx,const int cy)
   {
-   g_cv.FillCircle(cx, cy, 18, C_CHIP);
-   g_cv.Circle(cx, cy, 18, C_BRASS);
-   g_cv.Circle(cx, cy, 14, C_BRASS_DIM);
-   g_cv.FillCircle(cx, cy, 5, C_BRASS_HOT);
-   g_cv.FontSet("Georgia", 13, FW_BOLD);
-   g_cv.TextOut(cx - 5, cy - 8, "G", C_BRASS_HOT);
+   g_cv.FillRectangle(cx - 10, cy - 10, cx + 10, cy + 10, C_CHIP_ON);
+   g_cv.Rectangle(cx - 10, cy - 10, cx + 10, cy + 10, C_BRASS);
+   TextL(cx - 5, cy - 8, "G", C_BRASS_HOT, 13, true);
   }
 
 //+------------------------------------------------------------------+
@@ -585,9 +562,49 @@ void TextL(const int x,const int y,const string t,const uint clr,const int sz,co
 //+------------------------------------------------------------------+
 void TextStory(const int x,const int y,const string t,const uint clr,const int sz)
   {
-   if(!g_cv.FontSet("Georgia", sz, FW_BOLD))
-      g_cv.FontSet("Palatino Linotype", sz, FW_BOLD);
+   g_cv.FontSet("Segoe UI", sz, FW_BOLD);
    g_cv.TextOut(x, y, t, clr);
+  }
+
+//+------------------------------------------------------------------+
+int SignalDir(const SRow &row)
+  {
+   if(!row.ready || !row.legal || row.dir == 0)
+      return 0;
+   return row.dir;
+  }
+
+//+------------------------------------------------------------------+
+bool SignalStrong(const SRow &row)
+  {
+   return (SignalDir(row) != 0 && row.grade >= InpMinGradeQ4 / 10.0);
+  }
+
+//+------------------------------------------------------------------+
+void DrawSignal(const int x,const int y,const SRow &row)
+  {
+   const int d = SignalDir(row);
+   string lab = "WAIT";
+   uint fg = C_MUTED;
+   uint bg = C_CHIP;
+   uint bd = C_LINE;
+   if(d > 0)
+     {
+      lab = (SignalStrong(row) ? "BUY" : "buy");
+      fg = (SignalStrong(row) ? C_INK : C_LONG);
+      bg = (SignalStrong(row) ? C_LONG : C_CHIP);
+      bd = C_LONG;
+     }
+   else if(d < 0)
+     {
+      lab = (SignalStrong(row) ? "SELL" : "sell");
+      fg = (SignalStrong(row) ? C_CREAM : C_SHORT);
+      bg = (SignalStrong(row) ? C_SHORT : C_CHIP);
+      bd = C_SHORT;
+     }
+   FillRound(x, y, x + 58, y + 22, 4, bg);
+   g_cv.Rectangle(x, y, x + 58, y + 22, bd);
+   TextL(x + 10, y + 3, lab, fg, 12, true);
   }
 
 //+------------------------------------------------------------------+
@@ -660,7 +677,7 @@ void DrawGeometry(const int x,const int y,const int w,const int h,const SRow &ro
    g_cv.Rectangle(x, y, x + w, y + h, C_LINE);
    if(!row.ready)
      {
-      TextL(x + 14, y + 22, "The watch is still waking...", C_MUTED, 11);
+      TextL(x + 14, y + 22, "Scanning Market Watch...", C_MUTED, 11);
       return;
      }
    const int mid = y + h / 2 + 4;
@@ -734,8 +751,8 @@ void DrawPanel(void)
    Frame();
    Crest(36, 36);
 
-   TextStory(62, 16, "Grade Ledger", C_BRASS_HOT, 22);
-   TextL(64, 44, SetLabel(g_set) + "   ·   the Market Watch   ·   no steel drawn", C_MUTED, 11);
+   TextStory(62, 16, "GRADE SCAN", C_CREAM, 20);
+   TextL(64, 44, SetLabel(g_set) + "   ·   Market Watch   ·   signals only, no trades", C_MUTED, 11);
    g_cv.LineHorizontal(20, g_width - 20, 62, C_LINE);
 
    DrawChip(22, CHIP_Y, 46, "S1", g_set == 0);
@@ -745,18 +762,25 @@ void DrawPanel(void)
    DrawChip(246, CHIP_Y, 56, "ALL", g_filter == FILTER_ALL);
    DrawChip(308, CHIP_Y, 72, "LEGAL", g_filter == FILTER_LEGAL);
    DrawChip(386, CHIP_Y, 64, "Q4+", g_filter == FILTER_Q4);
-   DrawChip(22, CHIP2_Y, 56, "LONG", g_dir == DIR_LONG);
-   DrawChip(84, CHIP2_Y, 64, "SHORT", g_dir == DIR_SHORT);
+   DrawChip(22, CHIP2_Y, 56, "BUY", g_dir == DIR_LONG);
+   DrawChip(84, CHIP2_Y, 64, "SELL", g_dir == DIR_SHORT);
    DrawChip(154, CHIP2_Y, 56, "BOTH", g_dir == DIR_BOTH);
    DrawChip(226, CHIP2_Y, 64, "BELL", g_alerts_on);
    DrawChip(296, CHIP2_Y, 46, g_collapsed ? "+" : "-", g_collapsed);
 
-   int signals = 0;
+   int buys = 0, sells = 0, strong = 0;
    for(int i = 0; i < g_count; i++)
-      if(g_rows[i].ready && g_rows[i].legal && g_rows[i].grade >= InpMinGradeQ4 / 10.0)
-         signals++;
-   TextStory(g_width - 248, 18, IntegerToString(signals), C_BRASS_HOT, 22);
-   TextL(g_width - 248, 44, "worthy marks    " + IntegerToString(ArraySize(g_order)) + "/" + IntegerToString(g_count), C_MUTED, 11);
+     {
+      const int d = SignalDir(g_rows[i]);
+      if(d > 0) buys++;
+      if(d < 0) sells++;
+      if(SignalStrong(g_rows[i])) strong++;
+     }
+   TextStory(g_width - 300, 16, IntegerToString(buys), C_LONG, 20);
+   TextL(g_width - 268, 22, "BUY", C_LONG, 11, true);
+   TextStory(g_width - 210, 16, IntegerToString(sells), C_SHORT, 20);
+   TextL(g_width - 178, 22, "SELL", C_SHORT, 11, true);
+   TextL(g_width - 300, 44, IntegerToString(strong) + " Q4+   " + IntegerToString(ArraySize(g_order)) + "/" + IntegerToString(g_count) + " rows", C_MUTED, 11);
 
    if(g_collapsed)
      {
@@ -765,8 +789,8 @@ void DrawPanel(void)
      }
 
    const int col_y = TABLE_TOP - 20;
-   TextL(24, col_y, "NAME", C_MUTED, 10);
-   TextL(150, col_y, "WAY", C_MUTED, 10);
+   TextL(24, col_y, "SIGNAL", C_MUTED, 10);
+   TextL(96, col_y, "SYMBOL", C_MUTED, 10);
    TextL(210, col_y, "BID", C_MUTED, 10);
    TextL(300, col_y, "SPR", C_MUTED, 10);
    TextL(350, col_y, "GRADE", C_MUTED, 10);
@@ -778,6 +802,10 @@ void DrawPanel(void)
    g_cv.LineHorizontal(18, g_width - 18, TABLE_TOP - 6, C_BRASS_DIM);
 
    const int shown = ArraySize(g_order);
+   if(shown == 0)
+     {
+      TextL(24, TABLE_TOP + 12, "No rows. Click ALL if Q4+ is empty. Check Market Watch has symbols.", C_MUTED, 12);
+     }
    const int start = g_scroll;
    const int stop = MathMin(shown, start + g_visible);
    for(int i = start; i < stop; i++)
@@ -791,14 +819,14 @@ void DrawPanel(void)
       else
          g_cv.FillRectangle(12, y - 2, g_width - 12, y + ROW_H - 6, ((i - start) % 2) == 0 ? C_ROW : C_ROW2);
 
-      TextL(24, y + 6, row.symbol, C_CREAM, 12, true);
       if(!row.ready)
         {
-         TextL(150, y + 6, "...", C_DEAD, 12);
+         TextL(24, y + 6, "...", C_DEAD, 12);
+         TextL(96, y + 6, row.symbol, C_MUTED, 12);
          continue;
         }
-      const string dir = (row.dir > 0 ? "LONG" : (row.dir < 0 ? "SHORT" : "FLAT"));
-      TextL(150, y + 6, dir, row.dir > 0 ? C_LONG : (row.dir < 0 ? C_SHORT : C_MUTED), 12, true);
+      DrawSignal(20, y + 3, row);
+      TextL(88, y + 6, row.symbol, C_CREAM, 12, true);
       const int digits = (int)SymbolInfoInteger(row.symbol, SYMBOL_DIGITS);
       TextL(210, y + 6, DoubleToString(row.bid, digits), C_CREAM, 11);
       const uint sprc = (InpMaxSpreadPips > 0 && row.spread_pips > InpMaxSpreadPips) ? C_SHORT : C_MUTED;
@@ -809,19 +837,19 @@ void DrawPanel(void)
       DrawCoin(548, y + 12, row.z_n);
       DrawCoin(588, y + 12, row.z_f);
       TextL(630, y + 6, DoubleToString(row.cci_f, 0), C_MUTED, 12);
-      string st = "quiet roads";
+      string st = "no signal";
       uint sc = C_DEAD;
-      if(row.legal && row.grade >= 2.0)
-        { st = "Q5  the snap"; sc = C_BRASS_HOT; }
-      else if(row.legal && row.grade >= InpMinGradeQ4 / 10.0)
-        { st = "Q4  a setup"; sc = C_BRASS; }
-      else if(row.legal)
-        { st = "legal, thin"; sc = C_CREAM; }
+      if(SignalStrong(row) && row.grade >= 2.0)
+        { st = (row.dir > 0 ? "BUY Q5" : "SELL Q5"); sc = (row.dir > 0 ? C_LONG : C_SHORT); }
+      else if(SignalStrong(row))
+        { st = (row.dir > 0 ? "BUY Q4" : "SELL Q4"); sc = (row.dir > 0 ? C_LONG : C_SHORT); }
+      else if(SignalDir(row) != 0)
+        { st = (row.dir > 0 ? "BUY weak" : "SELL weak"); sc = C_MUTED; }
       else if(!row.align)
-        { st = "clocks quarrel"; sc = C_DEAD; }
+        { st = "HTF mismatch"; sc = C_DEAD; }
       else
-        { st = "the gate holds"; sc = C_DEAD; }
-      TextL(690, y + 6, st, sc, 12, row.legal);
+        { st = "gated"; sc = C_DEAD; }
+      TextL(690, y + 6, st, sc, 12, SignalDir(row) != 0);
      }
 
    const int fy = g_height - FOOT_H;
@@ -836,7 +864,7 @@ void DrawPanel(void)
       focus.ready = false;
       focus.symbol = "";
      }
-   TextStory(22, fy + 12, focus.symbol == "" ? "Choose a name." : focus.symbol, C_BRASS_HOT, 16);
+   TextStory(22, fy + 12, focus.symbol == "" ? "Select a row" : focus.symbol, C_CREAM, 16);
    string foot = "Click selects. Double-click opens the chart.";
    if(focus.ready)
       foot = StringFormat("spr %.1f pips   bid %s   %s",
